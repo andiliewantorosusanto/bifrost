@@ -3,3 +3,5 @@ frontend/dist/*
 frontend/node_modules/*
 library/*
 models/*
+cookies.txt
+config.toml
