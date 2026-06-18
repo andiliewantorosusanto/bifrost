@@ -1,8 +1,3 @@
-"""FastAPI entry point: serves the Bifröst frontend and the /ws WebSocket.
-
-Client -> server: {"action": "start", "url": "..."} | {"action": "stop"}
-Server -> client: status / source / caption / chat / chat_status / warning events.
-"""
 from __future__ import annotations
 
 import logging
