@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Bifröst's own theme — independent of the old design system. */
+@theme {
+  --color-ink-950: #0a0c10;
+  --color-ink-900: #10131a;
+  --color-ink-800: #181d27;
+  --color-ink-700: #232a38;
+  --color-line: #252b38;
+  --color-line-strong: #313a4c;
+  --color-fg: #e8ebf2;
+  --color-fg-dim: #9aa3b5;
+  --color-fg-faint: #636d80;
+  --color-accent-300: #7dd3fc;
+  --color-accent-400: #38bdf8;
+  --color-accent-500: #0ea5e9;
+  --color-accent-600: #0284c7;
+  --color-live: #f43f5e;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-ink-950);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--color-ink-700); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.stage-fs:fullscreen { border-radius: 0; border: none; aspect-ratio: auto; }
+.stage-fs:fullscreen video, .stage-fs:fullscreen iframe { height: 100%; }

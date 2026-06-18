@@ -1,0 +1,23 @@
+services:
+  bifrost:
+    build: .
+    ports:
+      - "127.0.0.1:7842:7842"
+    volumes:
+      - ./config.toml:/srv/bifrost/config.toml:ro
+      # Offline library: downloaded videos + cached transcripts, persisted on host.
+      - ./library:/srv/bifrost/library
+      # YouTube cookies for members-only videos (export with `make cookies`;
+      # empty file = disabled). Writable on purpose: yt-dlp saves rotated
+      # cookies back on every run, which keeps the login fresh.
+      - ./cookies.txt:/srv/bifrost/cookies.txt
+    environment:
+      # whisper-server runs natively on the host for Metal GPU access.
+      BIFROST_WHISPER_URL: http://host.docker.internal:8178
+      # llama-server (local chat translation) also runs natively for Metal.
+      BIFROST_TRANSLATE_URL: http://host.docker.internal:8180
+      BIFROST_LIBRARY_DIR: /srv/bifrost/library
+      BIFROST_COOKIES: /srv/bifrost/cookies.txt
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # no-op on Docker Desktop, helps on Linux
+    restart: unless-stopped

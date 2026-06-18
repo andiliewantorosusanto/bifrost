@@ -1,0 +1,31 @@
+# Bifröst configuration. Copy to config.toml and fill in your keys.
+# Every key can be overridden with a BIFROST_<KEY> environment variable.
+
+# YouTube Data API v3 key — needed for the live-chat panel.
+# (Audio transcription works without it.)
+youtube_api_key = ""
+
+# DeepL API key (free tier ~500k chars/month) — translates chat messages.
+# Without it, chat shows untranslated originals.
+deepl_api_key = ""
+
+# Whisper model: "large-v3" (default) or "medium" (lighter — use if the fanless
+# M4 thermal-throttles on long sessions). NEVER "large-v3-turbo": turbo cannot
+# translate and would return Japanese. Restart run.sh after changing.
+whisper_model = "large-v3"
+
+# Where the app reaches whisper-server. Inside Docker this is overridden to
+# http://host.docker.internal:8178 by docker-compose.yml.
+whisper_url = "http://127.0.0.1:8178"
+
+# Audio chunk length in seconds (10–20 is sensible; longer = better context, more lag).
+chunk_seconds = 15
+
+# Also transcribe each chunk in the source language (Japanese) so the UI can show
+# original + translation side by side. Runs Whisper twice per chunk (~2× GPU work —
+# still well within real-time on the M4; turn off if thermals become an issue).
+dual_transcript = true
+
+# App server
+host = "0.0.0.0"
+port = 7842

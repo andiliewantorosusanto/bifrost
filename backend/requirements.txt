@@ -1,0 +1,7 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+httpx>=0.27,<1
+websockets>=12
+google-api-python-client>=2.140
+deepl>=1.18
+yt-dlp[default]>=2025.1.1
