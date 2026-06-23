@@ -214,12 +214,19 @@ class Session:
                                      "message": "That stream hasn't started yet."})
                 return
 
+        # Single-pull HLS: a fresh VOD watch (no saved file, not live) is pulled
+        # once and fanned out to a growing HLS stream the browser plays, gated to
+        # the transcribed second — one connection feeds both player and captions.
+        use_hls = not info.is_live and not local_media
+        hls_dir = library.ensure_hls_dir(info.video_id) if use_hls else None
+
         self._source_event = {
             "type": "source", "video_id": info.video_id, "title": info.title,
             "channel": info.channel, "is_live": info.is_live,
             "live_status": info.live_status, "duration": info.duration,
             "chunk_seconds": self.cfg.chunk_seconds, "model": self.cfg.whisper_model,
             "media": local_media, "cached": False,
+            "hls": library.hls_url(info.video_id) if use_hls else None,
         }
         await self.hub.send(self._source_event)
         await self.hub.send({"type": "status", "state": "running"})
@@ -255,6 +262,7 @@ class Session:
             url, self.cfg.chunk_seconds, info.is_live, info_json=info.info_json,
             local_file=library.media_path(info.video_id) if local_media else None,
             start_offset=start_offset, expected_duration=info.duration,
+            hls_dir=hls_dir,
         )
         self._tasks = [asyncio.create_task(self._audio_loop(self._stream), name="audio"),
                        asyncio.create_task(self._pipeline_monitor(), name="pipeline")]
@@ -417,6 +425,12 @@ class Session:
                 if not complete:
                     log.warning("transcript partial (to %ss) — saved as resumable",
                                 stream.start_offset + chunk_idx * self.cfg.chunk_seconds)
+                elif stream.hls_dir is not None and self._source_event:
+                    # The .ts already on disk ARE the download — remux them into
+                    # the permanent media.mp4 (stream copy) so reopening replays
+                    # natively from the library. No second network pull.
+                    if await library.concat_hls_to_mp4(self._source_event["video_id"]):
+                        log.info("built media.mp4 from captured HLS segments")
                 await self._push_library()
             self._save_live_session()  # no-op for VOD; finalizes a live snapshot
             await self.hub.send({"type": "status", "state": "ended",

@@ -63,6 +63,23 @@ async def shutdown() -> None:
     await session.translator.close()
 
 
+class LibraryStatic(StaticFiles):
+    """Serves the library, with HLS-aware caching for the in-progress player
+    stream: stream.m3u8 grows while a video is being watched, so it must always
+    revalidate (no-cache) or hls.js would miss new segments; the .ts segments are
+    write-once, so they can be cached hard. media.mp4 / captions.json fall through
+    to StaticFiles' defaults (ETag/Last-Modified)."""
+
+    async def get_response(self, path: str, scope: Scope):
+        resp = await super().get_response(path, scope)
+        if path.endswith(".m3u8"):
+            resp.headers["Cache-Control"] = "no-cache"
+            resp.headers["Content-Type"] = "application/vnd.apple.mpegurl"
+        elif path.endswith(".ts"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
 class SPAStatic(StaticFiles):
     """Cache-Control for a hashed-asset SPA: bundles under /assets/ are immutable
     (their hash changes on every content change), so cache them hard; index.html
@@ -80,7 +97,7 @@ class SPAStatic(StaticFiles):
 
 # Sub-mounts must come before / (the root mount catches everything).
 library.LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/library", StaticFiles(directory=str(library.LIBRARY_DIR)), name="library")
+app.mount("/library", LibraryStatic(directory=str(library.LIBRARY_DIR)), name="library")
 app.mount("/", SPAStatic(directory=str(FRONTEND), html=True), name="frontend")
 
 

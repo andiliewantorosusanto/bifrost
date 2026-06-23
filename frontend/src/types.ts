@@ -9,6 +9,7 @@ export interface SourceEvent {
   chunk_seconds: number
   model: string
   media?: string | null
+  hls?: string | null  // in-progress single-pull player stream (gated to captions)
   cached?: boolean
 }
 

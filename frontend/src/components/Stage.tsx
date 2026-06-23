@@ -4,7 +4,7 @@ import {
   Volume2, VolumeX, X,
 } from 'lucide-react'
 import type { CapSize, Caption, DownloadStatus, PipelineStatus, SourceEvent, Status } from '../types'
-import { capTime, fmtClockEpoch, fmtMedia, useNativePlayer, useYouTubePlayer } from '../players'
+import { capTime, fmtClockEpoch, fmtMedia, useHlsPlayer, useNativePlayer, useYouTubePlayer } from '../players'
 import { useNow, usePref } from '../useBifrost'
 import { CaptionView } from './Caption'
 
@@ -57,9 +57,17 @@ export function Stage({ source, captions, status, dual, setDual, overlayOn, setO
   pipeline: PipelineStatus | null
 }) {
   const media = source.media ?? null
-  const yt = useYouTubePlayer(media ? null : source.video_id, source.is_live)
+  // In-progress single-pull HLS (gated to the captions); falls back to the embed
+  // only when there's neither a saved file nor an HLS stream (e.g. live, for now).
+  const hlsSrc = !media && source.hls ? source.hls : null
+  // The gate: the last transcribed second. The HLS playhead can't pass it.
+  const watermark = captions.length ? Math.max(...captions.map(c => c.t1)) : 0
+  const yt = useYouTubePlayer(media || hlsSrc ? null : source.video_id, source.is_live)
   const nat = useNativePlayer(media)
-  const { api, error, time, duration, playing, muted, ready } = media ? nat : yt
+  const hls = useHlsPlayer(hlsSrc, watermark)
+  const active = media ? nat : hlsSrc ? hls : yt
+  const { api, error, time, duration, playing, muted, ready } = active
+  const gated = hlsSrc ? hls.gated : false
   const frameRef = useRef<HTMLDivElement>(null)
   const [fs, setFs] = useState(false)
   const now = useNow(1000)
@@ -207,10 +215,13 @@ export function Stage({ source, captions, status, dual, setDual, overlayOn, setO
           after an offline download): the YT IFrame API replaces its mount <div>
           with an iframe behind React's back, so reconciling across the swap
           throws removeChild and blanks the whole app. */}
-      <div ref={frameRef} key={media ? 'native' : 'embed'}
+      <div ref={frameRef} key={media ? 'native' : hlsSrc ? 'hls' : 'embed'}
         className="stage-fs relative aspect-video w-full overflow-hidden rounded-xl border border-line bg-black">
         {media
           ? <video ref={nat.ref} src={media} autoPlay playsInline
+              className="absolute inset-0 h-full w-full bg-black" />
+          : hlsSrc
+          ? <video ref={hls.ref} autoPlay playsInline
               className="absolute inset-0 h-full w-full bg-black" />
           : <div ref={yt.ref} className="absolute inset-0 h-full w-full [&>iframe]:h-full [&>iframe]:w-full" />}
 
@@ -285,6 +296,16 @@ export function Stage({ source, captions, status, dual, setDual, overlayOn, setO
           <div className="pointer-events-none absolute inset-x-4 bottom-[70px] flex justify-center">
             <span className="rounded-md bg-ink-950/60 px-3 py-1.5 text-sm text-white/65 backdrop-blur-md">
               Listening… first caption arrives after the first chunk.
+            </span>
+          </div>
+        )}
+        {/* HLS gate caught up to the transcript: video waits, never runs ahead. */}
+        {gated && current && status.state === 'running' && (
+          <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2">
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-ink-950/60 px-2.5 py-1
+                             font-mono text-xs text-white/75 backdrop-blur-md">
+              <span className="size-1.5 animate-pulse rounded-full bg-accent-400" />
+              buffering captions…
             </span>
           </div>
         )}

@@ -88,12 +88,25 @@ async def probe(url: str) -> SourceInfo:
     )
 
 
+# Video format for the single-pull HLS path: H.264 (avc1) so ffmpeg can COPY it
+# into the .ts segments (no software re-encode — the container has no Metal/VT,
+# so re-encoding would cook the fanless Air). Capped at 720p to bound bandwidth.
+HLS_VIDEO_FORMAT = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]/b"
+
+
 class ChunkStream:
-    """Owns the yt-dlp|ffmpeg pipeline and a temp dir of WAV segments."""
+    """Owns the yt-dlp|ffmpeg pipeline and a temp dir of WAV segments.
+
+    In HLS mode (``hls_dir`` set) the SAME ffmpeg also fans the pulled stream
+    out to a growing HLS playlist (``stream.m3u8`` + ``seg_*.ts``) the browser
+    plays — one network pull serves both the player and the captions. The WAV
+    segmentation (for Whisper) is unchanged; the .ts/playlist are written
+    straight into the served library dir and the consumer never touches them."""
 
     def __init__(self, url: str, chunk_seconds: int, is_live: bool,
                  info_json: Optional[Path] = None, local_file: Optional[Path] = None,
-                 start_offset: int = 0, expected_duration: Optional[int] = None):
+                 start_offset: int = 0, expected_duration: Optional[int] = None,
+                 hls_dir: Optional[Path] = None):
         self.url = url
         self.chunk_seconds = chunk_seconds
         self.is_live = is_live
@@ -101,6 +114,7 @@ class ChunkStream:
         self.local_file = local_file  # chunk a downloaded file instead of streaming
         self.start_offset = start_offset            # seconds into the media to begin
         self.expected_duration = expected_duration  # VOD length; enables stall resume
+        self.hls_dir = hls_dir  # write the player's HLS stream here (single-pull mode)
         self.workdir = Path(tempfile.mkdtemp(prefix="bifrost-audio-"))
         # Seconds of audio captured so far (incl. the chunk being written) —
         # read by the session's pipeline monitor for the UI speed readout.
@@ -132,24 +146,32 @@ class ChunkStream:
         if from_seconds and not self.is_live:
             # Start (or resume after a stall) mid-video.
             source_args = ["--download-sections", f"*{from_seconds}-", *source_args]
-        if not self.is_live:
+        if self.hls_dir is not None:
+            # Single-pull HLS: pull H.264 video + audio (not bestaudio) so the
+            # same stream can feed both the player and Whisper.
+            fmt = HLS_VIDEO_FORMAT
+        elif not self.is_live:
             # VODs download from direct https formats; skipping the segment
             # manifests makes fresh extractions fast (see probe()). Live needs
             # manifests, so this only applies to videos.
+            fmt = "bestaudio/best"
             source_args = ["--extractor-args", "youtube:skip=hls,dash", *source_args]
+        else:
+            fmt = "bestaudio/best"
         # OS-level pipe between yt-dlp and ffmpeg (an asyncio StreamReader can't
         # be used as another process's stdin).
         r_fd, w_fd = os.pipe()
         err_file = open(attempt_dir / "ytdlp.err", "wb")
         try:
             self._ytdlp = await asyncio.create_subprocess_exec(
-                "yt-dlp", "-q", "--no-playlist", "-f", "bestaudio/best", "-o", "-",
+                "yt-dlp", "-q", "--no-playlist", "-f", fmt, "-o", "-",
                 *cookie_args(), *source_args,
                 stdout=w_fd, stderr=err_file,
             )
             self._ffmpeg = await asyncio.create_subprocess_exec(
                 "ffmpeg", "-loglevel", "error", "-i", "pipe:0",
-                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+                *self._hls_output_args(),
+                "-map", "0:a:0", "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
                 "-f", "segment", "-segment_time", str(self.chunk_seconds),
                 "-reset_timestamps", "1",
                 str(attempt_dir / "chunk_%06d.wav"),
@@ -160,6 +182,27 @@ class ChunkStream:
             os.close(r_fd)
             os.close(w_fd)
             err_file.close()
+
+    def _hls_output_args(self) -> list[str]:
+        """The ffmpeg HLS output (player stream), or [] when not in HLS mode.
+
+        Video is COPIED (avc1 source) so there's no software re-encode; audio is
+        transcoded to AAC for the .ts. An EVENT playlist grows as segments land
+        and gets #EXT-X-ENDLIST on clean exit (so hls.js flips live→VOD). Resumes
+        after a stall continue the segment numbering and append to the playlist;
+        a killed (stalled) ffmpeg never wrote ENDLIST, so appending stays valid."""
+        if self.hls_dir is None:
+            return []
+        seg = len(list(self.hls_dir.glob("seg_*.ts")))
+        return [
+            "-map", "0:v:0", "-c:v", "copy", "-map", "0:a:0", "-c:a", "aac",
+            "-f", "hls", "-hls_time", str(self.chunk_seconds),
+            "-hls_playlist_type", "event",
+            "-hls_flags", "independent_segments+append_list",
+            "-start_number", str(seg),
+            "-hls_segment_filename", str(self.hls_dir / "seg_%06d.ts"),
+            str(self.hls_dir / "stream.m3u8"),
+        ]
 
     async def _kill(self) -> None:
         for proc in (self._ytdlp, self._ffmpeg):

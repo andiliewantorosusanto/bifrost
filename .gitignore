@@ -5,3 +5,4 @@ library/*
 models/*
 cookies.txt
 config.toml
+.vscode/*

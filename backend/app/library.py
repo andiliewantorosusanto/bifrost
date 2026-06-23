@@ -44,6 +44,55 @@ def media_path(video_id: str) -> Path:
     return _dir(video_id) / "media.mp4"
 
 
+# -- in-progress HLS (single-pull player stream) -----------------------------
+# A video being watched is pulled once and fanned out to a growing HLS playlist
+# (stream.m3u8 + seg_*.ts) the browser plays, gated to the transcribed second.
+# These live in the served library dir; on completion they're concatenated into
+# the permanent media.mp4 (no second download) and may be discarded.
+
+HLS_PLAYLIST = "stream.m3u8"
+
+
+def hls_url(video_id: str) -> str:
+    return f"/library/{video_id}/{HLS_PLAYLIST}"
+
+
+def ensure_hls_dir(video_id: str) -> Path:
+    """Create the served dir and clear any stale HLS from a previous watch."""
+    d = _dir(video_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / HLS_PLAYLIST).unlink(missing_ok=True)
+    for ts in d.glob("seg_*.ts"):
+        ts.unlink(missing_ok=True)
+    return d
+
+
+def clear_hls(video_id: str) -> None:
+    ensure_hls_dir(video_id)
+
+
+async def concat_hls_to_mp4(video_id: str) -> Optional[Path]:
+    """Remux the captured .ts segments into media.mp4 (stream copy, no second
+    pull, no re-encode). Returns the path, or None if there's nothing to build."""
+    d = _dir(video_id)
+    segs = sorted(d.glob("seg_*.ts"))
+    if not segs:
+        return None
+    out = media_path(video_id)
+    listing = "concat:" + "|".join(str(s) for s in segs)
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-loglevel", "error", "-i", listing,
+        "-c", "copy", "-bsf:a", "aac_adtstoasc", str(out),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0 or not out.exists():
+        log.warning("concat to mp4 failed for %s: %s", video_id,
+                    err.decode(errors="replace").strip()[-200:])
+        return None
+    return out
+
+
 @dataclass
 class Entry:
     video_id: str
